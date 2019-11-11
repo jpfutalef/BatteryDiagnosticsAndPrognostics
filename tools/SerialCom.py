@@ -31,20 +31,22 @@ class SerialConfig:
 
 
 class LoadConfig:
-    def __init__(self, baud_rate=9600, port="COM1", time_out=1):
+    def __init__(self, profile_name='Carga constante', port="COM1", time_out=1):
         """
         A class to store load info.
-        :param baud_rate:   communication baud rate. By default 9600.
+        :param profile_name:   Name of load profile. By default 'Carga constante'.
         :param port:    the port where the serial device is connected to. By default 'COM1'
         :param time_out:    communiaction timeout in seconds. By default 1 second.
         """
-        self.baudRate = baud_rate
+
         self.port = port
         self.timeout = time_out  # 1 segundo de timeout
+    def __str__(self):
+
 
 
 class ElectronicLoad:
-    def __init__(self, config_serial: SerialConfig, config_load, Ts=1, measurement_folder_path="../data/",
+    def __init__(self, config_serial: SerialConfig, config_load: LoadConfig, Ts=1, measurement_folder_path="../data/",
                  measurement_file_name="fileName"):
         # Measurement variables
         self.Ts = Ts
@@ -66,6 +68,9 @@ class ElectronicLoad:
         self.serial.baudrate = config_serial.baud_rate
         self.serial.port = config_serial.port
         self.serial.timeout = config_serial.timeout
+
+        # Set Load Config
+
 
         # Initialize serial communication
         self.begin()
@@ -95,7 +100,8 @@ class ElectronicLoad:
         time.sleep(self.Ts / 10)
         out = ''
         while self.serial.in_waiting > 0:
-            out += self.serial.read(1).decode("utf-8")  # TODO posiblemente mejor readline?
+            # out = self.serial.readline().decode("utf-8")
+            out = self.serial.readline()  # TODO posiblemente mejor readline?
         if out != '':
             return out
         else:

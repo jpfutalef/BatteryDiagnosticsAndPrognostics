@@ -66,7 +66,7 @@ class Medicion():
         else:
             return "Timeout"
 
-    def set_load_config():
+    def set_load_config(self):
         # TODO Definir curva de carga y configurar a la maquina
         return 0
 

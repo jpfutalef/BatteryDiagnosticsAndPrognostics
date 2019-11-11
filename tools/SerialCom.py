@@ -41,9 +41,9 @@ class LoadConfig:
 
         self.port = port
         self.timeout = time_out  # 1 segundo de timeout
+
     def __str__(self):
         pass
-
 
 
 class ElectronicLoad:
@@ -71,7 +71,6 @@ class ElectronicLoad:
         self.serial.timeout = config_serial.timeout
 
         # Set Load Config
-
 
         # Initialize serial communication
         self.begin()
@@ -102,7 +101,7 @@ class ElectronicLoad:
         out = ''
         while self.serial.in_waiting > 0:
             # out = self.serial.readline().decode("utf-8")
-            out = self.serial.readline()  # TODO posiblemente mejor readline?
+            out = float(self.serial.readline().decode("utf-8")[0:-2])  # TODO posiblemente mejor readline?
         if out != '':
             return out
         else:
@@ -130,12 +129,13 @@ class ElectronicLoad:
 
         # Initialize first values and append
         t0 = time.time()
+        t0_global = t0
 
         # Iterate until user press ctrl+c
         while True:
             t1 = time.time()
             if t1 - t0 >= sample_time:
-                data = {'t': [t1],
+                data = {'t': [t1 - t0_global],
                         'V': [self.read_voltage()],
                         'I': [self.read_current()]}
                 df = pd.DataFrame(data)
@@ -153,7 +153,7 @@ class ElectronicLoad:
 
 
 if __name__ == "__main__":
-    conf = SerialConfig(port="COM9")
+    conf = SerialConfig(port="COM3")
     N3300A = ElectronicLoad(conf, 10)
     N3300A.periodic_measurement()
     sys.exit(0)

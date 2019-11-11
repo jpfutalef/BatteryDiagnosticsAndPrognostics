@@ -42,6 +42,7 @@ class LoadConfig:
         self.port = port
         self.timeout = time_out  # 1 segundo de timeout
     def __str__(self):
+        pass
 
 
 

@@ -19,7 +19,7 @@ class SerConfig():
         self.timeout = 1  # 1 segundo de timeout
 
 
-class Medicion():
+class N3000():
     def __init__(self, SerConfig, Ts=1):
         self.Ts = Ts
         self.V = []
@@ -66,6 +66,8 @@ class Medicion():
         else:
             return "Timeout"
 
+    def set_mode(self): # TODO Configurar entre modo de carga y descarga
+
     def set_load_config():
         # TODO Definir curva de carga y configurar a la maquina
         return 0
@@ -94,9 +96,10 @@ class Medicion():
         df.to_csv(r'Measurement\export.csv', index=None, header=True)
 
 
+
 if __name__ == "__main__":
     conf = SerConfig()
-    Meas = Medicion(SerConfig)
+    Meas = N3000(SerConfig)
     Meas.set_load_config()
     Meas.begin()
     Meas.pack_data()

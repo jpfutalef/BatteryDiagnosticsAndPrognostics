@@ -31,16 +31,9 @@ class SerialConfig:
 
 
 class LoadConfig:
-    def __init__(self, profile_name='Carga constante', port="COM1", time_out=1):
-        """
-        A class to store load info.
-        :param profile_name:   Name of load profile. By default 'Carga constante'.
-        :param port:    the port where the serial device is connected to. By default 'COM1'
-        :param time_out:    communiaction timeout in seconds. By default 1 second.
-        """
-
-        self.port = port
-        self.timeout = time_out  # 1 segundo de timeout
+    def __init__(self, discharge_voltage=48.0, channels=(1,)):
+        self.discharge_voltage = discharge_voltage
+        self.channels = channels
 
     def __str__(self):
         pass
@@ -60,6 +53,7 @@ class ElectronicLoad:
         self.measurement_file_name = measurement_file_name
 
         self.measurement_file_path = self.measurement_folder_path + self.measurement_file_name + ".csv"
+        print('Data will be saved to:\n', self.measurement_file_path)
 
         # Create file where measured values will be stored. The file contains a header only.
         pd.DataFrame(columns=('t', 'V', 'I')).to_csv(self.measurement_file_path)
@@ -71,11 +65,12 @@ class ElectronicLoad:
         self.serial.timeout = config_serial.timeout
 
         # Set Load Config
+        self.load = config_load
 
         # Initialize serial communication
-        self.begin()
+        self.beginCommunication()
 
-    def begin(self):
+    def beginCommunication(self):
         # Try opening the serial port
         try:
             self.serial.open()
@@ -94,6 +89,11 @@ class ElectronicLoad:
             print("Cannot open serial port.")
             sys.exit(1)
 
+    def setup(self):
+        for channel in self.load.channels:
+            cmd = 'hola'
+            self._send(cmd)
+
     def _request(self, cmd):
         toSend = bytes(cmd + "\n", 'utf-8')
         self.serial.write(toSend)
@@ -101,11 +101,16 @@ class ElectronicLoad:
         out = ''
         while self.serial.in_waiting > 0:
             # out = self.serial.readline().decode("utf-8")
-            out = float(self.serial.readline().decode("utf-8")[0:-2])  # TODO posiblemente mejor readline?
+            out = self.serial.readline().decode("utf-8")[0:-2]  # TODO posiblemente mejor readline?
         if out != '':
             return out
         else:
             return "Timeout"
+
+    def _send(self, cmd):
+        toSend = bytes(cmd + "\n", 'utf-8')
+        self.serial.write(toSend)
+        time.sleep(self.Ts / 10)
 
     def read_voltage(self):
         # Leer voltaje desde el equipo
@@ -116,6 +121,39 @@ class ElectronicLoad:
         # Leer corriente desde el equipo
         meas = self._request("MEAS:CURR?")
         return meas
+
+    def read_current_parallel(self, channels=(1,)):
+        meas = [0]*len(channels)
+        for i, channel in enumerate(channels):
+            self._send('CHAN ' + str(channel))
+            meas[i] = self.read_current()
+        return meas
+
+    def read_voltage_current(self, channels=(1,)):
+        meas = self._request('MEAS:ARR:CURR?')
+        print()
+        return
+
+    def set_current(self, val, channels=(1,)):
+        for channel in channels:
+            self._send('CHAN ' + str(channel))
+            self._send('INPUT OFF; FUNC CURR')
+            self._send('CURR:RANG MAX')
+            self._send('CURR ' + str(val))
+            self._send('INPUT ON')
+        return
+
+    def turn_all_input_on(self, channels=(1,2,3)):
+        for channel in channels:
+            self._send('CHAN ' + str(channel))
+            self._send('INPUT ON')
+        return
+
+    def turn_all_input_off(self, channels=(1,2,3)):
+        for channel in channels:
+            self._send('CHAN ' + str(channel))
+            self._send('INPUT OFF')
+        return
 
     def set_load_config(self, config, method='loop'):
         # TODO Definir curva de carga y configurar a la maquina
@@ -131,17 +169,52 @@ class ElectronicLoad:
         t0 = time.time()
         t0_global = t0
 
-        # Iterate until user press ctrl+c
+        # Iterate until user press ctrl+c or voltage is above discharge voltage
+        V = 9999999999999.9
         while True:
             t1 = time.time()
             if t1 - t0 >= sample_time:
-                data = {'t': [t1 - t0_global],
-                        'V': [self.read_voltage()],
-                        'I': [self.read_current()]}
+                t = t1 - t0_global
+                V = self.read_voltage()
+                I = self.read_current()
+                data = {'t': [t],
+                        'V': [V],
+                        'I': [I]}
                 df = pd.DataFrame(data)
                 print(df)
                 df.to_csv(self.measurement_file_path, index=None, header=False, mode='a')
                 t0 = time.time()
+            if float(V) <= self.load.discharge_voltage:
+                break
+
+    def periodic_measurement_parallel(self, sample_time=1, channels=(1,)):
+        # Realizar mediciones constantes cada sample_time segundos
+
+        # Set signal handler
+        signal.signal(signal.SIGINT, signal_handler)
+
+        # Initialize first values and append
+        t0 = time.time()
+        t0_global = t0
+
+        # Iterate until user press ctrl+c or voltage is above discharge voltage
+        V = 9999999999999.9
+        while True:
+            t1 = time.time()
+            if t1 - t0 >= sample_time:
+                t = t1 - t0_global
+                V = self.read_voltage()
+                data = {'t': [t],
+                        'V': [V]}
+                I = self.read_current_parallel(channels=channels)
+                for channel, current in zip(channels, I):
+                    data['I (Chan '+str(channel)+')'] = [current]
+                df = pd.DataFrame(data)
+                print(df)
+                df.to_csv(self.measurement_file_path, index=None, header=False, mode='a')
+                t0 = time.time()
+            if float(V) <= self.load.discharge_voltage:
+                break
 
     def pack_data(self):
         data = {'V': self.V,
@@ -154,6 +227,9 @@ class ElectronicLoad:
 
 if __name__ == "__main__":
     conf = SerialConfig(port="COM3")
-    N3300A = ElectronicLoad(conf, 10)
-    N3300A.periodic_measurement()
+    load = LoadConfig()
+    N3300A = ElectronicLoad(conf, load)
+    # N3300A.set_current(2.0, channels=(1, 2, 3))
+    print(N3300A.read_current_parallel(channels=(1,2,3)))
+    N3300A.turn_all_input_off()
     sys.exit(0)

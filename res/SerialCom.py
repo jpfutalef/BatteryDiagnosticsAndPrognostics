@@ -18,7 +18,7 @@ def signal_handler():
 
 # Classes
 class SerialConfig:
-    def __init__(self, baud_rate=9600, port="COM1", time_out=1):
+    def __init__(self, baud_rate=9600, port="COM1", time_out=1, sleep_time=.07):
         """
         A class to store serial communication info.
         :param baud_rate:   communication baud rate. By default 9600.
@@ -28,6 +28,7 @@ class SerialConfig:
         self.baud_rate = baud_rate
         self.port = port
         self.timeout = time_out  # 1 segundo de timeout
+        self.sleep_time = sleep_time
 
 
 class LoadConfig:
@@ -56,6 +57,7 @@ class ElectronicLoad:
         self.serial.baudrate = config_serial.baud_rate
         self.serial.port = config_serial.port
         self.serial.timeout = config_serial.timeout
+        self.serial_sleep_time = config_serial.sleep_time
 
         # Set Load Config
         self.load = config_load
@@ -100,7 +102,7 @@ class ElectronicLoad:
     def _request(self, cmd):
         to_send = bytes(cmd + "\n", 'utf-8')
         self.serial.write(to_send)
-        time.sleep(.1)  # FIXME this takes too much time, what's the real solution?
+        time.sleep(self.serial_sleep_time)  # FIXME this takes too much time, what's the real solution?
         out = ''
         while self.serial.in_waiting > 0:
             out = self.serial.readline().decode("utf-8")[0:-2]
@@ -112,10 +114,11 @@ class ElectronicLoad:
     def _send(self, cmd):
         to_send = bytes(cmd + "\n", 'utf-8')
         self.serial.write(to_send)
-        time.sleep(.1)  # FIXME this takes too much time, what's the real solution?
+        time.sleep(self.serial_sleep_time)  # FIXME this takes too much time, what's the real solution?
 
     def read_voltage(self):
-        channels = self.load.channels
+        #channels = self.load.channels
+        channels = [1]  # FIXME a trick
         meas = [0] * len(channels)
         for i, channel in enumerate(channels):
             self._send('CHAN ' + str(channel))
@@ -172,8 +175,7 @@ class ElectronicLoad:
             if t1 - t0 >= sample_time:
                 t = t1 - t0_global
                 data = {'t': [t]}
-                voltage_list = self.read_voltage()
-                print('time voltage', time.time()-t-t0_global)
+                voltage_list = self.read_voltage()*3    # FIXME a trick
                 current_list = self.read_current()
                 for channel, voltage, current in zip(channels, voltage_list, current_list):
                     data['V CH' + str(channel)] = [voltage]

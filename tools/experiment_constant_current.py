@@ -1,5 +1,6 @@
 from res.SerialCom import SerialConfig, LoadConfig, ElectronicLoad
 import sys
+import time
 
 
 def experiment_current_profile(electronic_load: ElectronicLoad, current_profile,

@@ -125,21 +125,35 @@ class ElectronicLoad:
             meas[i] = self._request("MEAS:VOLT?")
         return meas
 
-    def read_current(self):
-        channels = self.load.channels
-        meas = [0] * len(channels)
-        for i, channel in enumerate(channels):
-            self._send('CHAN ' + str(channel))
-            meas[i] = self._request("MEAS:CURR?")
+    def read_voltage_single_channel(self, channel):
+        self._send('CHAN ' + str(channel))
+        meas = self._request("MEAS:VOLT?")
         return meas
+
+    def read_current_single_channel(self, channel):
+        self._send('CHAN ' + str(channel))
+        meas = self._request("MEAS:VOLT?")
+        return meas
+
+    def read_voltage_raw(self):
+        meas = self._request("MEAS:VOLT?")
+        return meas
+
+    def read_current_raw(self):
+        meas = self._request("MEAS:VOLT?")
+        return meas
+
+    def set_channel(self, channel):
+        self._send('CHAN ' + str(channel))
 
     def set_current(self, val):
         channels = self.load.channels
+        val_per_channel = val/len(channels)
         for channel in channels:
             self._send('CHAN ' + str(channel))
             self._send('INPUT OFF; FUNC CURR')
             self._send('CURR:RANG MAX')
-            self._send('CURR ' + str(val))
+            self._send('CURR ' + str(val_per_channel))
             self._send('INPUT ON')
         return
 

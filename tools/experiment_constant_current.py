@@ -5,8 +5,11 @@ import time
 
 def experiment_current_profile(electronic_load: ElectronicLoad, current_profile,
                                method='loop'):
-    for t, current in current_profile:
-        electronic_load.set_current(current)
+    t0 = time.time()
+    for t1, c in current_profile:
+        electronic_load.set_current(c)
+        while time.time() - t0 < t1:
+
     return
 
 

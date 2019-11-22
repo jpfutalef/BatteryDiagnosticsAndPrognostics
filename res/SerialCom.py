@@ -42,7 +42,7 @@ class LoadConfig:
 
 class ElectronicLoad:
     def __init__(self, config_serial: SerialConfig, config_load: LoadConfig, Ts=1, measurement_folder_path="../data/",
-                 measurement_file_name="fileName"):
+                 measurement_file_name="fileName", header=('t', 'I', 'V')):
         # Measurement variables
         self.Ts = Ts
 
@@ -63,17 +63,10 @@ class ElectronicLoad:
         self.load = config_load
 
         # Create file where measured values will be stored. The file contains a header only.
-        pd.DataFrame(columns=self.create_header()).to_csv(self.measurement_file_path, index=False)
+        pd.DataFrame(columns=header).to_csv(self.measurement_file_path, index=False)
 
         # Initialize serial communication
         self.beginCommunication()
-
-    def create_header(self):
-        header = ['t']
-        for channel in self.load.channels:
-            header.append('V CH' + str(channel))
-            header.append('I CH' + str(channel))
-        return header
 
     def beginCommunication(self):
         # Try opening the serial port
@@ -116,6 +109,17 @@ class ElectronicLoad:
         self.serial.write(to_send)
         time.sleep(self.serial_sleep_time)  # FIXME this takes too much time, what's the real solution?
 
+    def set_channel(self, channel):
+        self._send('CHAN ' + str(channel))
+
+    def read_voltage_raw(self):
+        meas = self._request("MEAS:VOLT?")
+        return meas
+
+    def read_current_raw(self):
+        meas = self._request("MEAS:VOLT?")
+        return meas
+
     def read_voltage(self):
         #channels = self.load.channels
         channels = [1]  # FIXME a trick
@@ -134,17 +138,6 @@ class ElectronicLoad:
         self._send('CHAN ' + str(channel))
         meas = self._request("MEAS:VOLT?")
         return meas
-
-    def read_voltage_raw(self):
-        meas = self._request("MEAS:VOLT?")
-        return meas
-
-    def read_current_raw(self):
-        meas = self._request("MEAS:VOLT?")
-        return meas
-
-    def set_channel(self, channel):
-        self._send('CHAN ' + str(channel))
 
     def set_current(self, val):
         channels = self.load.channels

@@ -2,262 +2,217 @@ import numpy as np
 from scipy.linalg import sqrtm as msqrt
 
 
-def unscentedTransform(x, P, kappa=0.0, alpha=1e-3, beta=2.0, algo='Julier'):
-    L = np.size(x)
+class UnscentedKalmanFilter:
+    def __init__(self, f, x0, p0, h=None, process_noise=None, observation_noise=None, uk0=None,
+                 recycle_sigma_points=True, kappa=1.0, input_at_output=False):
+        # TODO add doc. h=None returns the state (identity)
+        self.processFunction = f
+        self.x0 = x0
+        self.p0 = p0
 
-    # non-scalar case using Wan's method to calculate sigma points weights
-    if L > 1 and algo == 'Wan':
-        lambda_ = np.power(alpha, 2) * (L + kappa) - L
-        a = np.sqrt(L + lambda_)
+        if h is None:
+            self.observationFunction = lambda x: x
 
-        sP = msqrt(P)
+        else:
+            self.observationFunction = h
 
-        X = np.zeros([L, 2 * L + 1])
-        Wm = np.zeros([1, 2 * L + 1])
-        Wc = np.zeros([1, 2 * L + 1])
+        self.recycleSigmaPoints = recycle_sigma_points
+        self.kappa = kappa
 
-        X[:, 0] = x[:, 0]
-        Wm[0, 0] = lambda_ / (L + lambda_)
-        Wc[0, 0] = lambda_ / (L + lambda_) + 1.0 - alpha ** 2 + beta
+        # Covariance matrices
+        if process_noise is None:
+            self.processNoise = np.eye(self.stateDimension)
+        else:
+            self.processNoise = process_noise
 
-        for i in range(0, L):
-            X[:, i + 1] = x[:, 0] + a * sP[:, i]
-            X[:, i + L + 1] = x[:, 0] - a * sP[:, i]
-            Wm[:, i + 1] = 1 / (2.0 * (L + lambda_))
-            Wc[:, i + 1] = 1 / (2.0 * (L + lambda_))
-            Wm[:, i + L + 1] = 1 / (2.0 * (L + lambda_))
-            Wc[:, i + L + 1] = 1 / (2.0 * (L + lambda_))
+        if observation_noise is None:
+            self.observationNoise = np.eye(self.outputDimension)
+        else:
+            self.observationNoise = observation_noise
 
-        return X, Wm, Wc
+        # Initial input
+        if uk0 is None:
+            self.uk0 = np.vstack([.0])
+        else:
+            self.uk0 = np.vstack([uk0])
 
-    # non-scalar case using Julier's method to calculate sigma points weights
-    elif L > 1 and algo == 'Julier':
-        a = np.sqrt(L + kappa)
+        # If observation model requires the input, the following must be true
+        if input_at_output:
+            self.inputAtOutput = True
+        else:
+            self.inputAtOutput = False
 
-        sP = msqrt(P)
+        # Calculated from inputs
+        self.stateDimension = np.size(x0)
+        if input_at_output:
+            self.outputDimension = np.size(self.observationFunction(x0, uk0))
+        else:
+            self.outputDimension = np.size(self.observationFunction(x0))
 
-        X = np.zeros([L, 2 * L + 1])
-        W = np.zeros([1, 2 * L + 1])
+        # Create sigma points matrices
+        self.X = np.zeros([self.stateDimension, 2 * self.stateDimension + 1])  # stores sigma points
+        self.priorX = np.zeros([self.stateDimension, 2 * self.stateDimension + 1])  # stores evaluated sigma points
+        self.priorX_extended = np.zeros(
+            [self.stateDimension, 4 * self.stateDimension + 1])  # stores extended evaluated sigma points
+        self.priorY = np.zeros(
+            [self.outputDimension, 2 * self.stateDimension + 1])  # stores not extended evaluated sigma points
+        self.priorY_extended = np.zeros(
+            [self.outputDimension, 4 * self.stateDimension + 1])  # stores extended evaluated sigma points
 
-        X[:, 0] = x[:, 0]
-        W[0, 0] = kappa / (L + kappa)
+        # Sigma points weights
+        self.weights = np.zeros([1, 2 * self.stateDimension + 1])  # stores weights
+        self.gamma = self.stateDimension + kappa  # L+kappa
+        self.sqrtGamma = np.sqrt(self.gamma)  # sqrt(L+kappa)
 
-        for i in range(0, L):
-            X[:, i + 1] = x[:, 0] + a * sP[:, i]
-            X[:, i + L + 1] = x[:, 0] - a * sP[:, i]
-            W[:, i + 1] = 1 / (2.0 * (L + kappa))
-            W[:, i + L + 1] = 1 / (2.0 * (L + kappa))
+        self.weights_extended = np.zeros([1, 4 * self.stateDimension + 1])  # stores weights
+        self.gamma_extended = self.stateDimension + kappa  # L+kappa
+        self.sqrtGamma_extended = np.sqrt(self.gamma)  # sqrt(L+kappa)
 
-        return X, W
+        self.updateWeights(kappa)
 
-    # scalar case
-    else:
-        a = np.sqrt(L + kappa)
-        sP = np.sqrt(P)
-        X = np.zeros([1, 3])
-        Wm = np.zeros([1, 3])
-        Wc = np.zeros([1, 3])
+        # prior vectors
+        self.x1_prior = x0
+        self.p1_prior = p0
 
-        X[0, 0] = x
-        X[0, 1] = x + a * sP
-        X[0, 2] = x - a * sP
+        if input_at_output:
+            self.y_prior = self.observationFunction(x0, uk0)
+        else:
+            self.y_prior = self.observationFunction(x0)
 
-        Wm[0, 0] = kappa / (L + kappa)
-        Wc[0, 0] = kappa / (L + kappa)
-        Wm[0, 1] = 1 / (2.0 * (L + kappa))
-        Wc[0, 1] = 1 / (2.0 * (L + kappa))
-        Wm[0, 2] = 1 / (2.0 * (L + kappa))
-        Wc[0, 2] = 1 / (2.0 * (L + kappa))
+        # Matrices
+        self.pyy = np.zeros_like(self.observationNoise)
+        self.pxy = np.zeros((self.stateDimension, self.outputDimension))
+        self.kalmanGain = np.zeros((self.stateDimension, self.outputDimension))
 
-        return X, Wm, Wc
+    def updateWeights(self, kappa):
+        # Non-extended
+        self.kappa = kappa
+        self.gamma = self.stateDimension + kappa  # L+kappa
+        self.sqrtGamma = np.sqrt(self.gamma)
 
+        self.weights[0, 0] = kappa / self.gamma
 
-def unscentedTransform_addPoints(x, Q, Xprev, kappa=0.0, alpha=1e-3, beta=2.0,
-                                 algo='Julier'):
-    n = np.size(x)
-    L = 2 * n
+        for i in range(0, self.stateDimension):
+            self.weights[:, i + 1] = 1 / (2.0 * self.gamma)
+            self.weights[:, i + self.stateDimension + 1] = 1 / (2.0 * self.gamma)
 
-    # non-scalar case
-    if n > 1 and algo == 'Wan':
-        lambda_ = np.power(alpha, 2) * (L + kappa) - L
-        a = np.sqrt(L + lambda_)
+        # Extended
+        self.gamma_extended = 2 * self.stateDimension + kappa  # L+kappa
+        self.sqrtGamma_extended = np.sqrt(self.gamma_extended)
 
-        sP = msqrt(Q)
+        self.weights_extended[0, 0] = kappa / self.gamma_extended
 
-        X = np.zeros([n, 2 * L + 1])
-        Wm = np.zeros([1, 2 * L + 1])
-        Wc = np.zeros([1, 2 * L + 1])
+        for i in range(0, self.stateDimension):
+            self.weights_extended[:, i + 1] = 1 / (2.0 * self.gamma_extended)
+            self.weights_extended[:, i + self.stateDimension + 1] = 1 / (2.0 * self.gamma_extended)
+            self.weights_extended[:, i + 2 * self.stateDimension + 1] = 1 / (2.0 * self.gamma_extended)
+            self.weights_extended[:, i + 3 * self.stateDimension + 1] = 1 / (2.0 * self.gamma_extended)
 
-        X[:, 0:L + 1] = Xprev
-        Wm[0, 0] = lambda_ / (L + lambda_)
-        Wc[0, 0] = lambda_ / (L + lambda_) + 1.0 - alpha ** 2 + beta
+    def unscentedTransform(self, x, p, x_matrix):
+        sP = msqrt(p)
+        x_matrix[:, 0] = x[:, 0]
 
-        for i in range(0, n):
-            X[:, i + 2 * n + 1] = x[:, 0] + a * sP[:, i - 1]
-            X[:, i + 3 * n + 1] = x[:, 0] - a * sP[:, i - 1]
+        for i in range(0, self.stateDimension):
+            x_matrix[:, i + 1] = x[:, 0] + self.sqrtGamma * sP[:, i]
+            x_matrix[:, i + 1 + self.stateDimension] = x[:, 0] - self.sqrtGamma * sP[:, i]
 
-            Wm[0, i + 1] = 1 / (2.0 * (n + kappa))
-            Wc[0, i + 1] = 1 / (2.0 * (n + kappa))
-            Wm[0, i + n + 1] = 1 / (2.0 * (n + kappa))
-            Wc[0, i + n + 1] = 1 / (2.0 * (n + kappa))
+        return x_matrix
 
-            Wm[0, i + 2 * n + 1] = 1 / (2.0 * (n + kappa))
-            Wc[0, i + 2 * n + 1] = 1 / (2.0 * (n + kappa))
-            Wm[0, i + 3 * n + 1] = 1 / (2.0 * (n + kappa))
-            Wc[0, i + 3 * n + 1] = 1 / (2.0 * (n + kappa))
+    def unscentedTransformExtended(self, x_matrix_old, x_matrix_new, p):
+        sP = msqrt(p)
+        x_matrix_new[:, 0] = x_matrix_old[:, 0]
 
-        return X, Wm, Wc
+        for i in range(0, 2 * self.stateDimension):
+            if i < self.stateDimension:
+                x_matrix_new[:, i + 1] = x_matrix_old[:, i + 1]
+                x_matrix_new[:, i + 1 + self.stateDimension] = x_matrix_old[:, i + 1 + self.stateDimension]
+            else:
+                x_matrix_new[:, i + 1 + self.stateDimension] = x_matrix_new[:, 0] + \
+                                                               self.sqrtGamma_extended * sP[:, i - self.stateDimension]
+                x_matrix_new[:, i + 1 + 2 * self.stateDimension] = \
+                    x_matrix_new[:, 0] - self.sqrtGamma_extended * sP[:, i - self.stateDimension]
+        return x_matrix_new
 
-    # non-scalar case
-    elif n > 1 and algo == 'Julier':
-        a = np.sqrt(L + kappa)
+    def aPosterioriEstimation(self, uk0, yk1, internal=False, process_noise=None, observation_noise=None):
+        # Update process and observation noises
+        if process_noise is not None:
+            self.processNoise = process_noise
 
-        sP = msqrt(Q)
+        if observation_noise is not None:
+            self.observationNoise = observation_noise
 
-        X = np.zeros([n, 2 * L + 1])
-        W = np.zeros([1, 2 * L + 1])
+        # Update input
+        self.uk0 = uk0
 
-        X[:, 0:L + 1] = Xprev
-        W[0, 0] = kappa / (L + kappa)
+        # Obtain sigma points from previous a posteriori estimation
+        self.unscentedTransform(self.x0, self.p0, self.X)
 
-        for i in range(0, n):
-            X[:, i + 2 * n + 1] = x[:, 0] + a * sP[:, i - 1]
-            X[:, i + 3 * n + 1] = x[:, 0] - a * sP[:, i - 1]
+        # Evaluate sigma points
+        for i in range(0, np.size(self.X, 1)):
+            self.priorX[:, i] = self.processFunction(np.vstack(self.X[:, i]), self.uk0)[:, 0]
 
-            W[0, i + 1] = 1 / (2.0 * (L + kappa))
-            W[0, i + n + 1] = 1 / (2.0 * (L + kappa))
-            W[0, i + 2 * n + 1] = 1 / (2.0 * (L + kappa))
-            W[0, i + 3 * n + 1] = 1 / (2.0 * (L + kappa))
+        # Obtain prior values
+        self.x1_prior = weightedSum(self.priorX, self.weights)
+        self.p1_prior = np.copy(self.processNoise)
+        for i in range(0, np.size(self.priorX, 1)):
+            v = np.vstack(self.priorX[:, i]) - self.x1_prior
+            self.p1_prior += self.weights[:, i] * np.outer(v, v)
 
-        return X, W
+        # Propagate prediction
+        if self.recycleSigmaPoints:
+            self.unscentedTransformExtended(self.priorX, self.priorX_extended, self.processNoise)
+            if self.inputAtOutput:
+                for i in range(0, np.size(self.priorX_extended, 1)):
+                    self.priorY_extended[:, i] = self.observationFunction(np.vstack(self.priorX_extended[:, i]),
+                                                                          uk0)[:, 0]
+            else:
+                for i in range(0, np.size(self.priorX_extended, 1)):
+                    self.priorY_extended[:, i] = self.observationFunction(np.vstack(self.priorX_extended[:, i]))[:, 0]
 
-    # scalar case
-    else:
-        a = np.sqrt(L + kappa)
-        sP = np.sqrt(Q)
-        X = np.zeros([1, 5])
-        Wm = np.zeros([1, 5])
-        Wc = np.zeros([1, 5])
+            self.y_prior = weightedSum(self.priorY_extended, self.weights_extended)
 
-        X[0, 0:3] = Xprev
-        X[0, 3] = x + a * sP
-        X[0, 4] = x - a * sP
+        else:
+            if self.inputAtOutput:
+                for i in range(0, np.size(self.priorX, 1)):
+                    self.priorY[:, i] = self.observationFunction(np.vstack(self.priorX[:, i]), uk0)[:, 0]
+            else:
+                for i in range(0, np.size(self.priorX, 1)):
+                    self.priorY[:, i] = self.observationFunction(np.vstack(self.priorX[:, i]))[:, 0]
 
-        Wm[0, 0] = kappa / (2.0 * n + kappa)
-        Wc[0, 1:5] = np.ones([1, 4]) / (2.0 * (2.0 * n + kappa))
+            self.y_prior = weightedSum(self.priorY, self.weights)
 
-        return X, Wm, Wc
+        # Update equations
+        self.pyy = np.copy(self.observationNoise)
+        self.pxy = np.zeros((self.stateDimension, self.outputDimension))
+
+        if self.recycleSigmaPoints:
+            for i in range(0, np.size(self.priorY_extended, 1)):
+                v = np.vstack(self.priorY_extended[:, i]) - self.y_prior
+                self.pyy += self.weights_extended[0, i] * np.outer(v, v)
+
+                w = np.vstack(self.priorX_extended[:, i]) - self.x1_prior
+                ww = np.vstack(self.priorY_extended[:, i]) - self.y_prior
+                self.pxy = self.weights_extended[0, i] * np.outer(w, ww)
+
+        else:
+            for i in range(0, np.size(self.priorY, 1)):
+                v = np.vstack(self.priorY[:, i]) - self.y_prior
+                self.pyy += self.weights[0, i] * np.outer(v, v)
+
+                w = np.vstack(self.priorX[:, i]) - self.x1_prior
+                ww = np.vstack(self.priorY[:, i]) - self.y_prior
+                self.pxy = self.weights[0, i] * np.outer(w, ww)
+
+        self.kalmanGain = np.matmul(self.pxy, np.linalg.inv(self.pyy))
+        xk1 = self.x1_prior + np.matmul(self.kalmanGain, yk1 - self.y_prior)
+        Pk1 = self.p1_prior - np.matmul(np.matmul(self.kalmanGain, self.pyy), self.kalmanGain.T)
+
+        if internal:
+            self.x0 = xk1
+            self.p0 = Pk1
+
+        return xk1, Pk1
 
 
 def weightedSum(X, W):
     return np.vstack(np.average(X, axis=1, weights=W[0, :]))
-
-
-def evalSigmaPoints(sp, f):
-    firstEvaluatedSP = f(np.vstack(sp[:, 0]))
-    nColumns = np.size(sp, 1)
-    nRows = np.size(firstEvaluatedSP, 0)
-
-    evaluatedSP = np.zeros([nRows, nColumns])
-
-    evaluatedSP[:, 0] = firstEvaluatedSP[:, 0]
-    for i in range(1, nColumns):
-        evaluatedSP[:, i] = f(np.vstack(sp[:, i]))[:, 0]
-    return evaluatedSP
-
-
-def evalSigmaPointsWithInput(sp, u, f):
-    firstEvaluatedSP = f(np.vstack(sp[:, 0]), u)
-    nColumns = np.size(sp, 1)
-    nRows = np.size(firstEvaluatedSP, 0)
-
-    evaluatedSP = np.zeros([nRows, nColumns])
-
-    evaluatedSP[:, 0] = firstEvaluatedSP[:, 0]
-    for i in range(1, nColumns):
-        evaluatedSP[:, i] = f(np.vstack(sp[:, i]), u)[:, 0]
-    return evaluatedSP
-
-
-def UKF_additiveNoise(xk0, Pk0, uk0, yk1, Q, R, F, H, algo='Julier', kappa=1.0,
-                      recycleSigmaPoints=True, alpha=1e-3, beta=2.0, ):
-    if algo == 'Wan':
-        Xk0, Wmk0, Wck0 = unscentedTransform(xk0, Pk0, algo=algo, kappa=kappa)
-
-        # Prediction
-        Xk1_prior = evalSigmaPointsWithInput(Xk0, uk0, F)
-        xk1_prior = weightedSum(Xk1_prior, Wmk0)
-        Pk1_prior = np.copy(Q)
-        for i in range(0, np.size(Xk1_prior, 1)):
-            v = np.vstack(Xk1_prior[:, i]) - xk1_prior
-            Pk1_prior += Wck0[:, i] * np.outer(v, v)
-
-        # Propagate prediction
-        if recycleSigmaPoints:
-            Xk1_prior_new, Wmk1, Wck1 = unscentedTransform_addPoints(xk1_prior, Q, Xk1_prior,
-                                                                     algo=algo, kappa=kappa,
-                                                                     alpha=alpha, beta=beta)
-        else:
-            Xk1_prior_new, Wk1 = unscentedTransform(xk1_prior, Q, algo=algo, kappa=kappa,
-                                                    alpha=alpha, beta=beta)
-
-        Yk1_prior = evalSigmaPoints(Xk1_prior_new, H)
-        yk1_prior = weightedSum(Yk1_prior, Wmk1)
-
-        # Correction
-        Pyy = np.copy(R)
-        for i in range(0, np.size(Yk1_prior, 1)):
-            v = np.vstack(Yk1_prior[:, i]) - yk1_prior
-            Pyy += Wck1[0, i] * np.outer(v, v)
-
-        Pxy = np.zeros([np.size(xk0), np.size(yk1)])
-        for i in range(0, np.size(Yk1_prior, 1)):
-            v = np.vstack(Xk1_prior_new[:, i]) - xk1_prior
-            w = np.vstack(Yk1_prior[:, i]) - yk1_prior
-            Pxy += Wck1[0, i] * np.outer(v, w)
-
-        K = np.matmul(Pxy, np.linalg.inv(Pyy))
-        xk1 = xk1_prior + np.matmul(K, yk1 - yk1_prior)
-        Pk1 = Pk1_prior - np.matmul(np.matmul(K, Pyy), K.T)
-        return xk1, Pk1
-
-    elif algo == 'Julier':
-        Xk0, Wk0 = unscentedTransform(xk0, Pk0, algo=algo, kappa=kappa)
-
-        # Prediction
-        Xk1_prior = evalSigmaPointsWithInput(Xk0, uk0, F)
-        xk1_prior = weightedSum(Xk1_prior, Wk0)
-        Pk1_prior = np.copy(Q)
-        for i in range(0, np.size(Xk1_prior, 1)):
-            v = np.vstack(Xk1_prior[:, i]) - xk1_prior
-            Pk1_prior += Wk0[0, i] * np.outer(v, v)
-
-        # Propagate prediction
-        if recycleSigmaPoints:
-            Xk1_prior_new, Wk1 = unscentedTransform_addPoints(xk1_prior, Q, Xk1_prior,
-                                                              algo=algo, kappa=kappa)
-        else:
-            Xk1_prior_new, Wk1 = unscentedTransform(xk1_prior, Q,
-                                                    algo=algo, kappa=kappa)
-
-        Yk1_prior = evalSigmaPoints(Xk1_prior_new, H)
-        yk1_prior = weightedSum(Yk1_prior, Wk1)
-
-        # Correction
-        Pyy = np.copy(R)
-        for i in range(0, np.size(Yk1_prior, 1)):
-            v = np.vstack(Yk1_prior[:, i]) - yk1_prior
-            Pyy += Wk1[0, i] * np.outer(v, v)
-
-        Pxy = np.zeros([np.size(xk0), np.size(yk1)])
-        for i in range(0, np.size(Yk1_prior, 1)):
-            v = np.vstack(Xk1_prior_new[:, i]) - xk1_prior
-            w = np.vstack(Yk1_prior[:, i]) - yk1_prior
-            Pxy += Wk1[0, i] * np.outer(v, w)
-
-        K = np.matmul(Pxy, np.linalg.inv(Pyy))
-        xk1 = xk1_prior + np.matmul(K, yk1 - yk1_prior)
-        Pk1 = Pk1_prior - np.matmul(np.matmul(K, Pyy), K.T)
-        return xk1, Pk1
-
-    return

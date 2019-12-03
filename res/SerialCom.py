@@ -42,7 +42,7 @@ class LoadConfig:
 
 class ElectronicLoad:
     def __init__(self, config_serial: SerialConfig, config_load: LoadConfig, Ts=1, measurement_folder_path="../data/",
-                 measurement_file_name="fileName", header=('t', 'I', 'V')):
+                 measurement_file_name="fileName"):
         # Measurement variables
         self.Ts = Ts
 
@@ -61,9 +61,6 @@ class ElectronicLoad:
 
         # Set Load Config
         self.load = config_load
-
-        # Create file where measured values will be stored. The file contains a header only.
-        pd.DataFrame(columns=header).to_csv(self.measurement_file_path, index=False)
 
         # Initialize serial communication
         self.beginCommunication()
@@ -117,7 +114,7 @@ class ElectronicLoad:
         return meas
 
     def read_current_raw(self):
-        meas = self._request("MEAS:VOLT?")
+        meas = self._request("MEAS:CURR?")
         return meas
 
     def read_voltage(self):
@@ -136,7 +133,7 @@ class ElectronicLoad:
 
     def read_current_single_channel(self, channel):
         self._send('CHAN ' + str(channel))
-        meas = self._request("MEAS:VOLT?")
+        meas = self._request("MEAS:CURR?")
         return meas
 
     def set_current(self, val):
